@@ -2,7 +2,7 @@
 
 **Team Members:**
 * BLASON RAJ (SRN: PES2UG24CS122 ; GitHub: blason2108)
-* Atharva Gouni (SRN: PES2UG24CS094 ; GitHub:  )
+* Atharva Gouni (SRN: PES2UG24CS094 ; GitHub: mrgouni21  )
 
 ## Build, Load, and Run Instructions
 

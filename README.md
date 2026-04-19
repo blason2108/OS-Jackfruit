@@ -1,111 +1,157 @@
-# Multi-Container Runtime
+# OS-Jackfruit: Custom Linux Container Runtime
 
-A lightweight Linux container runtime in C with a long-running supervisor and a kernel-space memory monitor.
+**Team Members:**
+* BLASON RAJ (SRN: PES2UG24CS122 ; GitHub: blason2108)
+* Atharva Gouni (SRN: PES2UG24CS094 ; GitHub:  )
 
-Read [`project-guide.md`](project-guide.md) for the full project specification.
+## Build, Load, and Run Instructions
 
----
+### Environment Setup
+- **Host OS:** Ubuntu 24.04 (Bare Metal Boot)
+- **Kernel Version:** 6.17+
+- **Root Filesystem:** Alpine Linux Mini-Rootfs (v3.20.3)
 
-## Getting Started
+**Initial Setup Completed:**
+1. Bypassed the VM restriction in `environment-check.sh` to allow execution on bare metal Ubuntu.
+2. Updated `monitor.c` (`timer_delete_sync`) to ensure compatibility with modern Linux kernels (6.15+).
+3. Downloaded and extracted the Alpine mini-rootfs into the `rootfs-base/` directory to serve as the isolated filesystem template.
 
-### 1. Fork the Repository
+### Execution Guide
 
-1. Go to [github.com/shivangjhalani/OS-Jackfruit](https://github.com/shivangjhalani/OS-Jackfruit)
-2. Click **Fork** (top-right)
-3. Clone your fork:
+To reproduce the project demonstration, open two terminal windows (one for the long-running daemon, and one for the CLI client) and execute the following sequence.
 
+#### 0. Pre-Run Clean
+Ensure a pristine environment by clearing any stale processes, kernel modules, log files, or mounts.
+
+**Terminal 2**
 ```bash
-git clone https://github.com/<your-username>/OS-Jackfruit.git
-cd OS-Jackfruit
+sudo killall sleep cpu_hog io_pulse mem_hog 2>/dev/null
+sudo killall engine 2>/dev/null
+sudo rmmod monitor 2>/dev/null
+sudo umount ~/OS-Jackfruit/rootfs-*/proc 2>/dev/null
+sudo rm -rf ~/OS-Jackfruit/logs/*
 ```
 
-### 2. Set Up Your VM
+#### 1. Setup and Initialization
+Compile the user-space binaries, load the kernel monitor, and start the supervisor daemon.
 
-You need an **Ubuntu 22.04 or 24.04** VM with **Secure Boot OFF**. WSL will not work.
-
-Install dependencies:
-
+**Terminal 1 (Supervisor)**
 ```bash
-sudo apt update
-sudo apt install -y build-essential linux-headers-$(uname -r)
-```
-
-### 3. Run the Environment Check
-
-```bash
-cd boilerplate
-chmod +x environment-check.sh
-sudo ./environment-check.sh
-```
-
-Fix any issues reported before moving on.
-
-### 4. Prepare the Root Filesystem
-
-```bash
-mkdir rootfs-base
-wget https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.3-x86_64.tar.gz
-tar -xzf alpine-minirootfs-3.20.3-x86_64.tar.gz -C rootfs-base
-
-# Make one writable copy per container you plan to run
-cp -a ./rootfs-base ./rootfs-alpha
-cp -a ./rootfs-base ./rootfs-beta
-```
-
-Do not commit `rootfs-base/` or `rootfs-*` directories to your repository.
-
-### 5. Understand the Boilerplate
-
-The `boilerplate/` folder contains starter files:
-
-| File                   | Purpose                                             |
-| ---------------------- | --------------------------------------------------- |
-| `engine.c`             | User-space runtime and supervisor skeleton          |
-| `monitor.c`            | Kernel module skeleton                              |
-| `monitor_ioctl.h`      | Shared ioctl command definitions                    |
-| `Makefile`             | Build targets for both user-space and kernel module |
-| `cpu_hog.c`            | CPU-bound test workload                             |
-| `io_pulse.c`           | I/O-bound test workload                             |
-| `memory_hog.c`         | Memory-consuming test workload                      |
-| `environment-check.sh` | VM environment preflight check                      |
-
-Use these as your starting point. You are free to restructure the repository however you want — the submission requirements are listed in the project guide.
-
-### 6. Build and Verify
-
-```bash
-cd boilerplate
+cd ~/OS-Jackfruit/boilerplate
 make
+cd ~/OS-Jackfruit
+sudo insmod boilerplate/monitor.ko
+sudo ./boilerplate/engine supervisor ./rootfs-base
 ```
+*(Leave Terminal 1 running in the background)*
 
-If this compiles without errors, your environment is ready.
+#### 2. Multi-Container Supervision
+Launch multiple isolated background containers and verify their tracking metadata.
 
-### 7. GitHub Actions Smoke Check
-
-Your fork will inherit a minimal GitHub Actions workflow from this repository.
-
-That workflow only performs CI-safe checks:
-
-- `make -C boilerplate ci`
-- user-space binary compilation (`engine`, `memory_hog`, `cpu_hog`, `io_pulse`)
-- `./boilerplate/engine` with no arguments must print usage and exit with a non-zero status
-
-The CI-safe build command is:
-
+**Terminal 2 (Client)**
 ```bash
-make -C boilerplate ci
+cd ~/OS-Jackfruit
+sudo ./boilerplate/engine start alpha ./rootfs-alpha "sleep 100"
+sudo ./boilerplate/engine start beta ./rootfs-beta "sleep 100"
+sudo ./boilerplate/engine ps
 ```
 
-This smoke check does not test kernel-module loading, supervisor runtime behavior, or container execution.
+#### 3. Memory Enforcement
+Demonstrate the kernel monitor's ability to enforce soft and hard Resident Set Size (RSS) limits.
 
----
+**Terminal 2 (Client)**
+```bash
+sudo ./boilerplate/engine stop alpha
+sudo ./boilerplate/engine start memtest ./rootfs-alpha "/memory_hog" --soft-mib 2 --hard-mib 10
+sleep 15
+sudo dmesg | tail -n 10
+```
 
-## What to Do Next
+#### 4. Scheduling & Bounded-Buffer Logging
+Run concurrent CPU and I/O workloads with adjusted priorities and verify the log-capture pipeline.
 
-Read [`project-guide.md`](project-guide.md) end to end. It contains:
+**Terminal 2 (Client)**
+```bash
+sudo ./boilerplate/engine stop memtest
+sudo ./boilerplate/engine stop beta
+sudo ./boilerplate/engine start hog ./rootfs-alpha "/cpu_hog" --nice 10
+sudo ./boilerplate/engine start pulse ./rootfs-beta "/io_pulse"
+sleep 5
+sudo ./boilerplate/engine ps
+cat logs/hog.log
+cat logs/pulse.log
+```
 
-- The six implementation tasks (multi-container runtime, CLI, logging, kernel monitor, scheduling experiments, cleanup)
-- The engineering analysis you must write
-- The exact submission requirements, including what your `README.md` must contain (screenshots, analysis, design decisions)
+#### 5. Clean Teardown
+Prove that all system resources, namespaces, and kernel allocations are cleanly released.
 
-Your fork's `README.md` should be replaced with your own project documentation as described in the submission package section of the project guide. (As in get rid of all the above content and replace with your README.md)
+**Terminal 2 (Client)**
+```bash
+sudo ./boilerplate/engine stop hog
+sudo ./boilerplate/engine stop pulse
+```
+
+**Terminal 1 (Supervisor)**
+Press `Ctrl+C` to gracefully shut down the supervisor daemon.
+
+**Terminal 2 (Client)**
+```bash
+sudo rmmod monitor
+sudo dmesg | tail -n 5
+ps aux | grep engine
+sudo umount ~/OS-Jackfruit/rootfs-*/proc
+```
+
+## Demo Screenshots
+1. **Multi-container supervision:** [Completed] - Shows multiple `sleep` processes running under the supervisor.
+2. **Metadata tracking:** [Completed] - Output of the `ps` command showing tracked container metadata including PIDs and resource limits.
+3. **Bounded-buffer logging:** [Completed] - Evidence of container output captured into log files via the concurrent pipeline.
+4. **CLI and IPC:** [Completed] - Shows successful "start" commands issued via CLI to the supervisor daemon.
+5. **Soft-limit warning:** [Completed] - `dmesg` output showing a soft-limit warning event when the `mem_hog` container crossed 2 MiB RSS.
+6. **Hard-limit enforcement:** [Completed] - `dmesg` output showing the `mem_hog` container being killed via `SIGKILL` after exceeding its 10 MiB hard limit.
+7. **Scheduling experiment:** [Completed] - Terminal output showing concurrent execution of `cpu_hog` (nice 10) and `io_pulse` (nice 0).
+8. **Clean teardown:** [Completed] - Terminal output showing the successful `rmmod` command, `dmesg` unload confirmation, and clean `ps` process tree.
+
+## Engineering Analysis
+
+### 1. Isolation Mechanisms
+- **Namespace Isolation:** The runtime utilizes the `clone()` system call with `CLONE_NEWPID`, `CLONE_NEWUTS`, and `CLONE_NEWNS` to provide each container its own process ID space, hostname, and mount points.
+- **Filesystem Isolation:** Each container is confined to a dedicated writable copy of the Alpine rootfs using `chroot` and `chdir`. 
+- **Kernel-level Sharing:** While namespaces isolate resource visibility, the containers still share the host's underlying Linux kernel and hardware resources.
+
+### 2. Supervisor Lifecycle
+- **Parent-Child Relationships:** The long-running supervisor acts as the reaper for container processes, ensuring that `SIGCHLD` signals are handled to prevent the accumulation of zombie processes.
+- **Control Plane IPC:** A UNIX domain socket at `/tmp/mini_runtime.sock` allows the CLI client to send requests to the supervisor, enabling management of multiple concurrent container lifecycles.
+
+### 3. IPC & Synchronization
+- **Producer-Consumer Logging:** Implemented a thread-safe bounded buffer to decouple container output (producers) from file I/O (consumer).
+- **Race Condition Prevention:** Without synchronization, multiple producer threads could overwrite the same buffer index simultaneously, or the consumer could attempt to read stale data.
+- **Synchronization Choice:** - **`pthread_mutex_t`:** Used to ensure mutual exclusion when accessing shared buffer indices and the `count` variable.
+    - **`pthread_cond_t`:** Used `not_full` and `not_empty` signals to prevent busy-waiting. This avoids deadlocks by putting threads to sleep when the buffer is full (producers) or empty (consumer).
+
+### 4. Memory Management (Kernel Module)
+- **RSS (Resident Set Size):** Measures the physical RAM currently held by the process. It is a critical metric for enforcement because it represents the actual pressure the container puts on the host's memory subsystem.
+- **Kernel Enforcement:** Enforcement belongs in kernel space because it must be performed in an atomic, high-priority context (timer interrupt) that cannot be bypassed or delayed by user-space process scheduling.
+- **Policy Differences:** - **Soft Limit:** Triggers a telemetry warning to signal that a container is exceeding its expected baseline.
+    - **Hard Limit:** Triggers immediate termination via `SIGKILL` to prevent a rogue container from causing a system-wide Out-of-Memory (OOM) panic.
+
+### 5. Scheduling Behavior
+- **Scheduler Dynamics:** The Linux Completely Fair Scheduler (CFS) balances CPU time across processes. 
+- **I/O-Bound vs CPU-Bound:** The `io_pulse` workload frequently yields the CPU while waiting for write operations to complete. The scheduler rewards this behavior with lower-latency wakeups to maintain responsiveness. Conversely, `cpu_hog` consumes its entire timeslice.
+- **Priority Adjustment:** Applying `--nice 10` to `cpu_hog` lowered its scheduling weight, ensuring the CPU-bound task did not starve the I/O-bound process or the supervisor daemon.
+
+## Design Decisions and Tradeoffs
+- **Namespace Selection:** Chose `clone()` flags for isolation. 
+    - **Tradeoff:** Increases complexity in stack management and process synchronization compared to simple `fork()`.
+    - **Justification:** Essential for meeting the security and isolation requirements of a true container runtime.
+- **Bounded Buffer Capacity:** Set a fixed capacity of 16 items.
+    - **Tradeoff:** High-volume logging might block producers if the consumer is slow.
+    - **Justification:** Prevents the supervisor from consuming excessive memory under heavy load.
+
+## Scheduler Experiment Results
+**Experiment Setup:**
+- Workload A: `cpu_hog` (CPU-bound) running with `--nice 10` priority.
+- Workload B: `io_pulse` (I/O-bound) running with default priority.
+
+**Observations:**
+Both containers executed concurrently. `io_pulse` immediately began iterating through its write loops, demonstrating rapid scheduler attention. `cpu_hog` processed calculations in the background, but its reduced priority ensured it gracefully yielded resources to the I/O operations and the supervisor's IPC handlers.
